@@ -1,81 +1,110 @@
 trigger: none
 
 parameters:
+  - name: objectId
+    displayName: "Object ID (principal to receive the role)"
+    type: string
+
+  - name: role
+    displayName: "Role to assign"
+    type: string
+    default: 'Contributor'
+    values:
+      - 'Owner'
+      - 'Contributor'
+      - 'Reader'
+      - 'AcrPull'
+
+  - name: principalType
+    displayName: "Principal Type"
+    type: string
+    default: 'User'
+    values:
+      - 'User'
+      - 'Group'
+      - 'ServicePrincipal'
+
   - name: personName
-    displayName: "Person/Owner Name (used to derive the Foundry RG name)"
+    displayName: "Person/Owner Name (used to derive the Foundry RG)"
     type: string
     default: 'Arthur'
+
   - name: environment
-    displayName: "Environment (dev | test | prod)"
+    displayName: "Environment"
     type: string
     default: 'dev'
     values:
       - 'dev'
       - 'test'
       - 'prod'
+
   - name: location
-    displayName: "Azure Region (only used if RG must be created)"
+    displayName: "Azure Region (only used if the RG must be created)"
     type: string
     default: 'brazilsouth'
-  # Override the derived RG name if needed (leave empty to use the default convention)
+
   - name: resourceGroupOverride
     displayName: "Resource Group Override (leave blank to use rg-{personName}-{environment})"
     type: string
     default: ''
-  # ADO variable group that holds principalId → role mappings.
-  # Each env var name encodes the principal GUID, the value is the role
-  # (Owner | Contributor | Reader | AcrPull).
-  - name: rbacVariableGroup
-    displayName: "Variable Group with RBAC assignments"
-    type: string
-    default: 'Foundry_RBAC'
 
 variables:
   - group: Arthur_VG
-  - group: ${{ parameters.rbacVariableGroup }}
   - name: rgName
     value: ${{ coalesce(parameters.resourceGroupOverride, format('rg-{0}-{1}', parameters.personName, parameters.environment)) }}
 
 stages:
   - stage: AssignRBAC
-    displayName: 'Assign RBAC on Foundry Resource Group'
+    displayName: 'Assign ${{ parameters.role }} to ${{ parameters.objectId }}'
     jobs:
       - job: AssignRBAC
-        displayName: 'Deploy Role Assignments'
+        displayName: 'Deploy Role Assignment'
         steps:
           - task: AzureCLI@2
-            displayName: 'Ensure Resource Group & Assign RBAC'
+            displayName: '1. Ensure Resource Group Exists'
+            inputs:
+              azureSubscription: '$(service_conn)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: az group create --name $(rgName) --location ${{ parameters.location }}
+
+          - task: AzureCLI@2
+            displayName: '2. Validate RBAC Bicep'
             inputs:
               azureSubscription: '$(service_conn)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                # 1. Ensure the Resource Group exists
-                az group create --name $(rgName) --location ${{ parameters.location }}
+                az deployment group validate \
+                  --resource-group $(rgName) \
+                  --template-file infra_AI_Foundry/bicep_files/rbac_assignments.bicep \
+                  --parameters principalId='${{ parameters.objectId }}' \
+                               roleName='${{ parameters.role }}' \
+                               principalType='${{ parameters.principalType }}'
 
-                # 2. Extract GUID→role pairs from the variable group env vars.
-                # Convention: env var name encodes the principal GUID as
-                # _XXXXXXXX_XXXX_XXXX_XXXX_XXXXXXXXXXXX, value is role name.
-                ASSIGNMENTS_JSON=$(python3 -c "
-                import os, json, re
-                assignments = []
-                pattern = re.compile(r'_?([A-F0-9]{8})_([A-F0-9]{4})_([A-F0-9]{4})_([A-F0-9]{4})_([A-F0-9]{12})', re.IGNORECASE)
-                valid_roles = ['Owner', 'Contributor', 'Reader', 'AcrPull']
-
-                for env_name, role in os.environ.items():
-                    if role in valid_roles:
-                        match = pattern.search(env_name)
-                        if match:
-                            guid = '-'.join(match.groups()).lower()
-                            assignments.append({'principalId': guid, 'roleName': role})
-
-                print(json.dumps(assignments))
-                ")
-
-                echo "Assignments resolved: $ASSIGNMENTS_JSON"
-
-                # 3. Deploy RBAC Bicep
+          - task: AzureCLI@2
+            displayName: '3. Assign Role'
+            inputs:
+              azureSubscription: '$(service_conn)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
                 az deployment group create \
                   --resource-group $(rgName) \
                   --template-file infra_AI_Foundry/bicep_files/rbac_assignments.bicep \
-                  --parameters assignments="$ASSIGNMENTS_JSON"
+                  --parameters principalId='${{ parameters.objectId }}' \
+                               roleName='${{ parameters.role }}' \
+                               principalType='${{ parameters.principalType }}'
+
+          - task: AzureCLI@2
+            displayName: '4. Smoke Test — Verify Assignment'
+            inputs:
+              azureSubscription: '$(service_conn)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az role assignment list \
+                  --resource-group $(rgName) \
+                  --assignee ${{ parameters.objectId }} \
+                  --query "[].{role:roleDefinitionName, principal:principalName, scope:scope}" \
+                  -o table

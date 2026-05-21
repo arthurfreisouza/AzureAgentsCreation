@@ -15,6 +15,10 @@ parameters:
       - 'Reader'
       - 'AcrPull'
 
+  - name: resourceGroup
+    displayName: "Resource Group Name"
+    type: string
+
   - name: principalType
     displayName: "Principal Type"
     type: string
@@ -24,34 +28,8 @@ parameters:
       - 'Group'
       - 'ServicePrincipal'
 
-  - name: personName
-    displayName: "Person/Owner Name (used to derive the Foundry RG)"
-    type: string
-    default: 'Arthur'
-
-  - name: environment
-    displayName: "Environment"
-    type: string
-    default: 'dev'
-    values:
-      - 'dev'
-      - 'test'
-      - 'prod'
-
-  - name: location
-    displayName: "Azure Region (only used if the RG must be created)"
-    type: string
-    default: 'brazilsouth'
-
-  - name: resourceGroupOverride
-    displayName: "Resource Group Override (leave blank to use rg-{personName}-{environment})"
-    type: string
-    default: ''
-
 variables:
   - group: Arthur_VG
-  - name: rgName
-    value: ${{ coalesce(parameters.resourceGroupOverride, format('rg-{0}-{1}', parameters.personName, parameters.environment)) }}
 
 stages:
   - stage: AssignRBAC
@@ -61,50 +39,42 @@ stages:
         displayName: 'Deploy Role Assignment'
         steps:
           - task: AzureCLI@2
-            displayName: '1. Ensure Resource Group Exists'
-            inputs:
-              azureSubscription: '$(service_conn)'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: az group create --name $(rgName) --location ${{ parameters.location }}
-
-          - task: AzureCLI@2
-            displayName: '2. Validate RBAC Bicep'
+            displayName: '1. Validate RBAC Bicep'
             inputs:
               azureSubscription: '$(service_conn)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
                 az deployment group validate \
-                  --resource-group $(rgName) \
+                  --resource-group ${{ parameters.resourceGroup }} \
                   --template-file infra_AI_Foundry/bicep_files/rbac_assignments.bicep \
                   --parameters principalId='${{ parameters.objectId }}' \
                                roleName='${{ parameters.role }}' \
                                principalType='${{ parameters.principalType }}'
 
           - task: AzureCLI@2
-            displayName: '3. Assign Role'
+            displayName: '2. Assign Role'
             inputs:
               azureSubscription: '$(service_conn)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
                 az deployment group create \
-                  --resource-group $(rgName) \
+                  --resource-group ${{ parameters.resourceGroup }} \
                   --template-file infra_AI_Foundry/bicep_files/rbac_assignments.bicep \
                   --parameters principalId='${{ parameters.objectId }}' \
                                roleName='${{ parameters.role }}' \
                                principalType='${{ parameters.principalType }}'
 
           - task: AzureCLI@2
-            displayName: '4. Smoke Test — Verify Assignment'
+            displayName: '3. Smoke Test — Verify Assignment'
             inputs:
               azureSubscription: '$(service_conn)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
                 az role assignment list \
-                  --resource-group $(rgName) \
+                  --resource-group ${{ parameters.resourceGroup }} \
                   --assignee ${{ parameters.objectId }} \
                   --query "[].{role:roleDefinitionName, principal:principalName, scope:scope}" \
                   -o table

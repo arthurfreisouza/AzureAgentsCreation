@@ -13,7 +13,43 @@ parameters:
     displayName: "Bicep Template Path"
     type: string
     default: 'infra_AI_Foundry/bicep_files/azure_aifoundry_deploy.bicep' # Modern Foundry resource (CognitiveServices/accounts kind=AIServices + projects)
-  
+
+  # --- Model deployment parameters ---
+  # The deployment name MUST match MODEL_NAME in the agent's .env file.
+  - name: modelDeploymentName
+    displayName: "Model Deployment Name (must match agent .env MODEL_NAME)"
+    type: string
+    default: 'gpt-4.1'
+  - name: modelName
+    displayName: "OpenAI Model"
+    type: string
+    default: 'gpt-4.1'
+    values:
+      - 'gpt-4.1'
+      - 'gpt-4.1-mini'
+      - 'gpt-4o'
+      - 'gpt-4o-mini'
+      - 'o3-mini'
+      - 'text-embedding-3-large'
+      - 'text-embedding-3-small'
+  - name: modelVersion
+    displayName: "Model Version (e.g. 2025-04-14 for gpt-4.1)"
+    type: string
+    default: '2025-04-14'
+  - name: modelSkuName
+    displayName: "Deployment SKU"
+    type: string
+    default: 'GlobalStandard'
+    values:
+      - 'GlobalStandard'
+      - 'Standard'
+      - 'ProvisionedManaged'
+      - 'DataZoneStandard'
+  - name: modelCapacity
+    displayName: "Capacity (thousand TPM for Standard SKUs)"
+    type: number
+    default: 50
+
   # Selection parameters for stages[cite: 1]
   - name: runDev
     displayName: "Deploy to Dev?"
@@ -81,7 +117,12 @@ stages:
                   --template-file ${{ parameters.templateML }} \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
-                               location='${{ parameters.location }}'
+                               location='${{ parameters.location }}' \
+                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
+                               modelName='${{ parameters.modelName }}' \
+                               modelVersion='${{ parameters.modelVersion }}' \
+                               modelSkuName='${{ parameters.modelSkuName }}' \
+                               modelCapacity=${{ parameters.modelCapacity }}
 
           - task: AzureCLI@2
             displayName: '3. What-If Preview'
@@ -95,7 +136,12 @@ stages:
                   --template-file ${{ parameters.templateML }} \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
-                               location='${{ parameters.location }}'
+                               location='${{ parameters.location }}' \
+                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
+                               modelName='${{ parameters.modelName }}' \
+                               modelVersion='${{ parameters.modelVersion }}' \
+                               modelSkuName='${{ parameters.modelSkuName }}' \
+                               modelCapacity=${{ parameters.modelCapacity }}
 
           - task: AzureCLI@2
             displayName: '4. Execute Deployment'
@@ -111,6 +157,11 @@ stages:
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
                                location='${{ parameters.location }}' \
+                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
+                               modelName='${{ parameters.modelName }}' \
+                               modelVersion='${{ parameters.modelVersion }}' \
+                               modelSkuName='${{ parameters.modelSkuName }}' \
+                               modelCapacity=${{ parameters.modelCapacity }} \
                   --query properties.outputs.foundryAccountName.value -o tsv)
                 echo "##vso[task.setvariable variable=foundryAccountName]$FOUNDRY_NAME"
 
@@ -156,7 +207,12 @@ stages:
                   --template-file ${{ parameters.templateML }} \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
-                               location='${{ parameters.location }}'
+                               location='${{ parameters.location }}' \
+                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
+                               modelName='${{ parameters.modelName }}' \
+                               modelVersion='${{ parameters.modelVersion }}' \
+                               modelSkuName='${{ parameters.modelSkuName }}' \
+                               modelCapacity=${{ parameters.modelCapacity }}
 
           - task: AzureCLI@2
             displayName: '3. What-If Preview'
@@ -170,7 +226,12 @@ stages:
                   --template-file ${{ parameters.templateML }} \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
-                               location='${{ parameters.location }}'
+                               location='${{ parameters.location }}' \
+                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
+                               modelName='${{ parameters.modelName }}' \
+                               modelVersion='${{ parameters.modelVersion }}' \
+                               modelSkuName='${{ parameters.modelSkuName }}' \
+                               modelCapacity=${{ parameters.modelCapacity }}
 
           - task: AzureCLI@2
             displayName: '4. Execute Deployment'
@@ -186,6 +247,11 @@ stages:
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
                                location='${{ parameters.location }}' \
+                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
+                               modelName='${{ parameters.modelName }}' \
+                               modelVersion='${{ parameters.modelVersion }}' \
+                               modelSkuName='${{ parameters.modelSkuName }}' \
+                               modelCapacity=${{ parameters.modelCapacity }} \
                   --query properties.outputs.foundryAccountName.value -o tsv)
                 echo "##vso[task.setvariable variable=foundryAccountName]$FOUNDRY_NAME"
 
@@ -223,7 +289,12 @@ stages:
                   --template-file ${{ parameters.templateML }} \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
-                               location='${{ parameters.location }}'
+                               location='${{ parameters.location }}' \
+                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
+                               modelName='${{ parameters.modelName }}' \
+                               modelVersion='${{ parameters.modelVersion }}' \
+                               modelSkuName='${{ parameters.modelSkuName }}' \
+                               modelCapacity=${{ parameters.modelCapacity }}
 
           - task: AzureCLI@2
             displayName: '3. What-If Preview'
@@ -237,7 +308,12 @@ stages:
                   --template-file ${{ parameters.templateML }} \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
-                               location='${{ parameters.location }}'
+                               location='${{ parameters.location }}' \
+                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
+                               modelName='${{ parameters.modelName }}' \
+                               modelVersion='${{ parameters.modelVersion }}' \
+                               modelSkuName='${{ parameters.modelSkuName }}' \
+                               modelCapacity=${{ parameters.modelCapacity }}
 
           - task: AzureCLI@2
             displayName: '4. Execute Deployment'
@@ -253,5 +329,10 @@ stages:
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
                                location='${{ parameters.location }}' \
+                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
+                               modelName='${{ parameters.modelName }}' \
+                               modelVersion='${{ parameters.modelVersion }}' \
+                               modelSkuName='${{ parameters.modelSkuName }}' \
+                               modelCapacity=${{ parameters.modelCapacity }} \
                   --query properties.outputs.foundryAccountName.value -o tsv)
                 echo "##vso[task.setvariable variable=foundryAccountName]$FOUNDRY_NAME"

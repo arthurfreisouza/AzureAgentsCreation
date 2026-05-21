@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import PromptAgentDefinition
+from azure.ai.agents import AgentsClient
 
 def load_environment_var():
     """Load environment variables from .env file."""
@@ -20,17 +21,8 @@ def load_file(file_path):
     return content
 
 
-def main():
-    """Main function to create the Trail Guide Agent."""
-    model_name, agent_name = load_environment_var()
-
-    # Read instructions from prompt file
-    prompt_file = Path(__file__).parent / 'prompts' / 'system_prompt.txt'
-    system_prompt = load_file(prompt_file)
-    version_file = Path(__file__).parent / 'VERSION.md'
-    agent_version = load_file(version_file)
-    description = f"Trail Guide Agent - Version {agent_version}"
-
+def create_new_foundry_agent(model_name, agent_name, system_prompt, description):
+    """Create a versioned Prompt Agent in the NEW Foundry (azure-ai-projects)."""
     project_client = AIProjectClient(
         endpoint=os.environ["ARTHUR_NEW_ENDPOINT_TEST"],
         credential=DefaultAzureCredential(),
@@ -44,7 +36,49 @@ def main():
         ),
         description=description,
     )
-    print(f"Agent created (id: {agent.id}, name: {agent.name}, version: {agent.version})")
+    print(f"[New Foundry] Agent created (id: {agent.id}, name: {agent.name}, version: {agent.version})")
+    return agent
+
+
+def create_old_foundry_agent(model_name, agent_name, system_prompt, description):
+    """Create a classic (Assistants-style) agent in the OLD Foundry surface.
+
+    These show up in the legacy 'Agents' tab in Azure AI Foundry — the one
+    with threads / runs / messages. Uses the `azure-ai-agents` SDK.
+    """
+    agents_client = AgentsClient(
+        endpoint=os.environ["ARTHUR_NEW_ENDPOINT_TEST"],
+        credential=DefaultAzureCredential(),
+    )
+
+    with agents_client:
+        agent = agents_client.create_agent(
+            model=model_name,
+            name=agent_name,
+            instructions=system_prompt,
+            description=description,
+        )
+    print(f"[Old Foundry] Agent created (id: {agent.id}, name: {agent.name})")
+    return agent
+
+
+def main():
+    """Main function to create the Trail Guide Agent in BOTH Foundry surfaces."""
+    model_name, agent_name = load_environment_var()
+
+    # Read instructions from prompt file
+    prompt_file = Path(__file__).parent / 'prompts' / 'system_prompt.txt'
+    system_prompt = load_file(prompt_file)
+    version_file = Path(__file__).parent / 'VERSION.md'
+    agent_version = load_file(version_file)
+    description = f"Trail Guide Agent - Version {agent_version}"
+
+    # New Foundry — versioned Prompt Agent (your original flow)
+    create_new_foundry_agent(model_name, agent_name, system_prompt, description)
+
+    # Old Foundry — classic Assistants-style agent
+    create_old_foundry_agent(model_name, agent_name, system_prompt, description)
+
 
 if __name__ == "__main__":
     main()

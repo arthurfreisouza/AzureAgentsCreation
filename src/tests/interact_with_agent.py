@@ -17,7 +17,7 @@ def interact_with_agent():
     
     # Initialize project client
     project_client = AIProjectClient(
-        endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        endpoint=os.environ["ARTHUR_NEW_ENDPOINT_TEST"],
         credential=DefaultAzureCredential(),
     )
     

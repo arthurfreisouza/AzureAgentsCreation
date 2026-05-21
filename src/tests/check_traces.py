@@ -21,7 +21,7 @@ load_dotenv()
 credential = DefaultAzureCredential()
 
 # Resolve the Application Insights connection string from the Foundry project
-project_endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
+project_endpoint = os.environ["ARTHUR_NEW_ENDPOINT_TEST"]
 project_client = AIProjectClient(endpoint=project_endpoint, credential=credential)
 connection_string = project_client.telemetry.get_application_insights_connection_string()
 

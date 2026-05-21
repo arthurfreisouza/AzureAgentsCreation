@@ -35,6 +35,21 @@ param projectDisplayName string = 'Default Project'
 @description('Description for the default Foundry project.')
 param projectDescription string = 'Default AI Foundry project'
 
+@description('Name of the OpenAI model deployment. Must match MODEL_NAME in the agent .env file.')
+param modelDeploymentName string = 'gpt-4.1'
+
+@description('OpenAI model family to deploy.')
+param modelName string = 'gpt-4.1'
+
+@description('Specific model version.')
+param modelVersion string = '2025-04-14'
+
+@description('Model deployment SKU (e.g., GlobalStandard, Standard, ProvisionedManaged).')
+param modelSkuName string = 'GlobalStandard'
+
+@description('Model deployment capacity (thousand-tokens-per-minute for Standard SKUs).')
+param modelCapacity int = 50
+
 // Naming convention: {personName}-{environment}
 var baseName = toLower('${personName}-${environment}')
 var foundryAccountName = take('aif-${baseName}', 64)
@@ -80,6 +95,30 @@ resource foundryProject 'Microsoft.CognitiveServices/accounts/projects@2025-06-0
   }
 }
 
+// OpenAI model deployment used by Foundry agents. Without this, agent runs
+// fail at invocation with "DeploymentNotFound" because the agent references
+// a model by deployment name that doesn't exist on the account.
+// dependsOn project to avoid parallel-child-write conflicts on the account.
+resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+  parent: foundryAccount
+  name: modelDeploymentName
+  sku: {
+    name: modelSkuName
+    capacity: modelCapacity
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: modelName
+      version: modelVersion
+    }
+  }
+  dependsOn: [
+    foundryProject
+  ]
+}
+
 output foundryAccountName string = foundryAccount.name
 output foundryProjectName string = foundryProject.name
 output foundryEndpoint string = foundryAccount.properties.endpoint
+output modelDeploymentName string = modelDeployment.name

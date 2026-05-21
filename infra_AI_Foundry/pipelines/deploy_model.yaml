@@ -1,0 +1,139 @@
+trigger: none
+
+parameters:
+  # Target: existing Foundry account + its resource group
+  - name: resourceGroup
+    displayName: "Resource Group of the Foundry account"
+    type: string
+    default: 'rg-Arthur-dev'
+  - name: foundryAccountName
+    displayName: "Existing AI Foundry Account Name"
+    type: string
+    default: 'aif-arthur-dev'
+  # The project name is informational — model deployments live at the account
+  # level and are shared by all projects in that account. Provide the project
+  # name to document which project will consume this deployment.
+  - name: foundryProjectName
+    displayName: "AI Foundry Project Name (for reference)"
+    type: string
+    default: 'proj-arthur-dev'
+
+  # Model deployment parameters
+  - name: modelDeploymentName
+    displayName: "Model Deployment Name (must match MODEL_NAME in agent .env)"
+    type: string
+    default: 'gpt-4.1'
+  - name: modelName
+    displayName: "OpenAI Model"
+    type: string
+    default: 'gpt-4.1'
+    values:
+      - 'gpt-4.1'
+      - 'gpt-4.1-mini'
+      - 'gpt-4o'
+      - 'gpt-4o-mini'
+      - 'o3-mini'
+      - 'text-embedding-3-large'
+      - 'text-embedding-3-small'
+  - name: modelVersion
+    displayName: "Model Version (e.g. 2025-04-14 for gpt-4.1)"
+    type: string
+    default: '2025-04-14'
+  - name: modelSkuName
+    displayName: "Deployment SKU"
+    type: string
+    default: 'GlobalStandard'
+    values:
+      - 'GlobalStandard'
+      - 'Standard'
+      - 'ProvisionedManaged'
+      - 'DataZoneStandard'
+  - name: modelCapacity
+    displayName: "Capacity (thousand TPM for Standard SKUs)"
+    type: number
+    default: 50
+
+variables:
+  - group: Arthur_VG
+  - name: templateModel
+    value: 'infra_AI_Foundry/bicep_files/azure_aifoundry_model_deploy.bicep'
+
+stages:
+  - stage: Lint
+    displayName: 'Lint Bicep'
+    jobs:
+      - job: LintBicep
+        steps:
+          - script: az bicep build --file $(templateModel)
+            displayName: 'Bicep Lint'
+
+  - stage: Deploy_Model
+    displayName: 'Deploy Model to ${{ parameters.foundryProjectName }}'
+    dependsOn: Lint
+    condition: succeeded()
+    jobs:
+      - job: DeployModel
+        displayName: 'Validate and Deploy Model'
+        steps:
+          - task: AzureCLI@2
+            displayName: '1. Validate Bicep Deployment'
+            inputs:
+              azureSubscription: '$(service_conn)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az deployment group validate \
+                  --resource-group ${{ parameters.resourceGroup }} \
+                  --template-file $(templateModel) \
+                  --parameters foundryAccountName='${{ parameters.foundryAccountName }}' \
+                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
+                               modelName='${{ parameters.modelName }}' \
+                               modelVersion='${{ parameters.modelVersion }}' \
+                               modelSkuName='${{ parameters.modelSkuName }}' \
+                               modelCapacity=${{ parameters.modelCapacity }}
+
+          - task: AzureCLI@2
+            displayName: '2. What-If Preview'
+            inputs:
+              azureSubscription: '$(service_conn)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az deployment group what-if \
+                  --resource-group ${{ parameters.resourceGroup }} \
+                  --template-file $(templateModel) \
+                  --parameters foundryAccountName='${{ parameters.foundryAccountName }}' \
+                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
+                               modelName='${{ parameters.modelName }}' \
+                               modelVersion='${{ parameters.modelVersion }}' \
+                               modelSkuName='${{ parameters.modelSkuName }}' \
+                               modelCapacity=${{ parameters.modelCapacity }}
+
+          - task: AzureCLI@2
+            displayName: '3. Execute Deployment'
+            inputs:
+              azureSubscription: '$(service_conn)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az deployment group create \
+                  --resource-group ${{ parameters.resourceGroup }} \
+                  --template-file $(templateModel) \
+                  --parameters foundryAccountName='${{ parameters.foundryAccountName }}' \
+                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
+                               modelName='${{ parameters.modelName }}' \
+                               modelVersion='${{ parameters.modelVersion }}' \
+                               modelSkuName='${{ parameters.modelSkuName }}' \
+                               modelCapacity=${{ parameters.modelCapacity }}
+
+          - task: AzureCLI@2
+            displayName: '4. Smoke Test — Verify Deployment Exists'
+            inputs:
+              azureSubscription: '$(service_conn)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az cognitiveservices account deployment show \
+                  --name ${{ parameters.foundryAccountName }} \
+                  --resource-group ${{ parameters.resourceGroup }} \
+                  --deployment-name ${{ parameters.modelDeploymentName }}

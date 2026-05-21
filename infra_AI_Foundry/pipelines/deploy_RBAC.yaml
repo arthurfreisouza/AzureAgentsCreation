@@ -1,26 +1,48 @@
 trigger: none
 
 parameters:
-  - name: RESOURCE_GROUP
+  - name: personName
+    displayName: "Person/Owner Name (used to derive the Foundry RG name)"
     type: string
-    default: 'projArthurReis'
+    default: 'Arthur'
+  - name: environment
+    displayName: "Environment (dev | test | prod)"
+    type: string
+    default: 'dev'
+    values:
+      - 'dev'
+      - 'test'
+      - 'prod'
   - name: location
+    displayName: "Azure Region (only used if RG must be created)"
     type: string
     default: 'brazilsouth'
-  - name: VARIABLE_GROUP_NAME
+  # Override the derived RG name if needed (leave empty to use the default convention)
+  - name: resourceGroupOverride
+    displayName: "Resource Group Override (leave blank to use rg-{personName}-{environment})"
     type: string
-    default: 'HouseRent'
+    default: ''
+  # ADO variable group that holds principalId → role mappings.
+  # Each env var name encodes the principal GUID, the value is the role
+  # (Owner | Contributor | Reader | AcrPull).
+  - name: rbacVariableGroup
+    displayName: "Variable Group with RBAC assignments"
+    type: string
+    default: 'Foundry_RBAC'
 
 variables:
-  - group: Arthur_VG  # Contains service_conn
-  - group: ${{ parameters.VARIABLE_GROUP_NAME }}
+  - group: Arthur_VG
+  - group: ${{ parameters.rbacVariableGroup }}
+  - name: rgName
+    value: ${{ coalesce(parameters.resourceGroupOverride, format('rg-{0}-{1}', parameters.personName, parameters.environment)) }}
 
 stages:
-  - stage: Provision
+  - stage: AssignRBAC
+    displayName: 'Assign RBAC on Foundry Resource Group'
     jobs:
       - job: AssignRBAC
+        displayName: 'Deploy Role Assignments'
         steps:
-          # Ensure RG exists before assigning roles
           - task: AzureCLI@2
             displayName: 'Ensure Resource Group & Assign RBAC'
             inputs:
@@ -29,31 +51,31 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 # 1. Ensure the Resource Group exists
-                az group create --name ${{ parameters.RESOURCE_GROUP }} --location ${{ parameters.location }}
+                az group create --name $(rgName) --location ${{ parameters.location }}
 
-                # 2. Extract GUIDs using a more flexible detection script
+                # 2. Extract GUID→role pairs from the variable group env vars.
+                # Convention: env var name encodes the principal GUID as
+                # _XXXXXXXX_XXXX_XXXX_XXXX_XXXXXXXXXXXX, value is role name.
                 ASSIGNMENTS_JSON=$(python3 -c "
                 import os, json, re
                 assignments = []
-                # Matches GUIDs with or without a leading underscore, using hyphens or underscores
                 pattern = re.compile(r'_?([A-F0-9]{8})_([A-F0-9]{4})_([A-F0-9]{4})_([A-F0-9]{4})_([A-F0-9]{12})', re.IGNORECASE)
                 valid_roles = ['Owner', 'Contributor', 'Reader', 'AcrPull']
-                
+
                 for env_name, role in os.environ.items():
                     if role in valid_roles:
                         match = pattern.search(env_name)
                         if match:
-                            # Convert back to standard hyphenated GUID format
                             guid = '-'.join(match.groups()).lower()
                             assignments.append({'principalId': guid, 'roleName': role})
-                
+
                 print(json.dumps(assignments))
                 ")
 
-                echo "Final JSON for Bicep: $ASSIGNMENTS_JSON"
+                echo "Assignments resolved: $ASSIGNMENTS_JSON"
 
-                # 3. Deploy Bicep
+                # 3. Deploy RBAC Bicep
                 az deployment group create \
-                  --resource-group ${{ parameters.RESOURCE_GROUP }} \
-                  --template-file infra/bicep_files/rbac_assignments.bicep \
+                  --resource-group $(rgName) \
+                  --template-file infra_AI_Foundry/bicep_files/rbac_assignments.bicep \
                   --parameters assignments="$ASSIGNMENTS_JSON"

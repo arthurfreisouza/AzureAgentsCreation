@@ -9,48 +9,16 @@ parameters:
     displayName: "Azure Region"
     type: string
     default: 'brazilsouth'
-  - name: templateML
-    displayName: "Bicep Template Path"
+  - name: projectDisplayName
+    displayName: "Foundry Project Display Name"
     type: string
-    default: 'infra_AI_Foundry/bicep_files/azure_aifoundry_deploy.bicep' # Modern Foundry resource (CognitiveServices/accounts kind=AIServices + projects)
+    default: 'Default Project'
+  - name: projectDescription
+    displayName: "Foundry Project Description"
+    type: string
+    default: 'Default AI Foundry project'
 
-  # --- Model deployment parameters ---
-  # The deployment name MUST match MODEL_NAME in the agent's .env file.
-  - name: modelDeploymentName
-    displayName: "Model Deployment Name (must match agent .env MODEL_NAME)"
-    type: string
-    default: 'gpt-4.1'
-  - name: modelName
-    displayName: "OpenAI Model"
-    type: string
-    default: 'gpt-4.1'
-    values:
-      - 'gpt-4.1'
-      - 'gpt-4.1-mini'
-      - 'gpt-4o'
-      - 'gpt-4o-mini'
-      - 'o3-mini'
-      - 'text-embedding-3-large'
-      - 'text-embedding-3-small'
-  - name: modelVersion
-    displayName: "Model Version (e.g. 2025-04-14 for gpt-4.1)"
-    type: string
-    default: '2025-04-14'
-  - name: modelSkuName
-    displayName: "Deployment SKU"
-    type: string
-    default: 'GlobalStandard'
-    values:
-      - 'GlobalStandard'
-      - 'Standard'
-      - 'ProvisionedManaged'
-      - 'DataZoneStandard'
-  - name: modelCapacity
-    displayName: "Capacity (thousand TPM for Standard SKUs)"
-    type: number
-    default: 50
-
-  # Selection parameters for stages[cite: 1]
+  # Stage selection
   - name: runDev
     displayName: "Deploy to Dev?"
     type: boolean
@@ -65,8 +33,9 @@ parameters:
     default: false
 
 variables:
-  - group: Arthur_VG 
-  # Consistent naming convention[cite: 1]
+  - group: Arthur_VG
+  - name: templateInfra
+    value: 'infra_AI_Foundry/bicep_files/azure_aifoundry_infra.bicep'
   - name: rgDev
     value: 'rg-${{ parameters.personName }}-dev'
   - name: rgTest
@@ -80,12 +49,12 @@ stages:
     jobs:
       - job: LintBicep
         steps:
-          - script: az bicep build --file ${{ parameters.templateML }}
+          - script: az bicep build --file $(templateInfra)
             displayName: 'Bicep Lint'
 
   # --- DEV STAGE ---
   - stage: Deploy_Dev
-    displayName: 'Deploy to Development'
+    displayName: 'Deploy Infra to Development'
     dependsOn: Lint
     condition: and(succeeded(), eq('${{ parameters.runDev }}', 'true'))
     variables:
@@ -114,15 +83,12 @@ stages:
               inlineScript: |
                 az deployment group validate \
                   --resource-group $(rgName) \
-                  --template-file ${{ parameters.templateML }} \
+                  --template-file $(templateInfra) \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
                                location='${{ parameters.location }}' \
-                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
-                               modelName='${{ parameters.modelName }}' \
-                               modelVersion='${{ parameters.modelVersion }}' \
-                               modelSkuName='${{ parameters.modelSkuName }}' \
-                               modelCapacity=${{ parameters.modelCapacity }}
+                               projectDisplayName='${{ parameters.projectDisplayName }}' \
+                               projectDescription='${{ parameters.projectDescription }}'
 
           - task: AzureCLI@2
             displayName: '3. What-If Preview'
@@ -133,15 +99,12 @@ stages:
               inlineScript: |
                 az deployment group what-if \
                   --resource-group $(rgName) \
-                  --template-file ${{ parameters.templateML }} \
+                  --template-file $(templateInfra) \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
                                location='${{ parameters.location }}' \
-                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
-                               modelName='${{ parameters.modelName }}' \
-                               modelVersion='${{ parameters.modelVersion }}' \
-                               modelSkuName='${{ parameters.modelSkuName }}' \
-                               modelCapacity=${{ parameters.modelCapacity }}
+                               projectDisplayName='${{ parameters.projectDisplayName }}' \
+                               projectDescription='${{ parameters.projectDescription }}'
 
           - task: AzureCLI@2
             displayName: '4. Execute Deployment'
@@ -150,32 +113,47 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                # Querying foundryAccountName from the modern Foundry resource
-                FOUNDRY_NAME=$(az deployment group create \
+                OUTPUTS=$(az deployment group create \
                   --resource-group $(rgName) \
-                  --template-file ${{ parameters.templateML }} \
+                  --template-file $(templateInfra) \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
                                location='${{ parameters.location }}' \
-                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
-                               modelName='${{ parameters.modelName }}' \
-                               modelVersion='${{ parameters.modelVersion }}' \
-                               modelSkuName='${{ parameters.modelSkuName }}' \
-                               modelCapacity=${{ parameters.modelCapacity }} \
-                  --query properties.outputs.foundryAccountName.value -o tsv)
-                echo "##vso[task.setvariable variable=foundryAccountName]$FOUNDRY_NAME"
+                               projectDisplayName='${{ parameters.projectDisplayName }}' \
+                               projectDescription='${{ parameters.projectDescription }}' \
+                  --query properties.outputs -o json)
+
+                echo "##vso[task.setvariable variable=foundryAccountName]$(echo "$OUTPUTS"    | jq -r '.foundryAccountName.value')"
+                echo "##vso[task.setvariable variable=storageAccountName]$(echo "$OUTPUTS"    | jq -r '.storageAccountName.value')"
+                echo "##vso[task.setvariable variable=keyVaultName]$(echo "$OUTPUTS"          | jq -r '.keyVaultName.value')"
+                echo "##vso[task.setvariable variable=containerRegistryName]$(echo "$OUTPUTS" | jq -r '.containerRegistryName.value')"
+                echo "##vso[task.setvariable variable=appInsightsName]$(echo "$OUTPUTS"       | jq -r '.appInsightsName.value')"
 
           - task: AzureCLI@2
-            displayName: '5. Smoke Test'
+            displayName: '5. Smoke Test — All Resources'
             inputs:
               azureSubscription: '$(service_conn)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
-              inlineScript: az cognitiveservices account show --name $(foundryAccountName) --resource-group $(rgName)
+              inlineScript: |
+                echo "=== AI Foundry Account ==="
+                az cognitiveservices account show --name $(foundryAccountName) --resource-group $(rgName) --query "{name:name, endpoint:properties.endpoint}" -o table
+
+                echo "=== Storage Account ==="
+                az storage account show --name $(storageAccountName) --resource-group $(rgName) --query "{name:name, sku:sku.name}" -o table
+
+                echo "=== Key Vault ==="
+                az keyvault show --name $(keyVaultName) --resource-group $(rgName) --query "{name:name, uri:properties.vaultUri}" -o table
+
+                echo "=== Container Registry ==="
+                az acr show --name $(containerRegistryName) --resource-group $(rgName) --query "{name:name, loginServer:loginServer}" -o table
+
+                echo "=== Application Insights ==="
+                az monitor app-insights component show --app $(appInsightsName) --resource-group $(rgName) --query "{name:name, instrumentationKey:instrumentationKey}" -o table
 
   # --- TEST STAGE ---
   - stage: Deploy_Test
-    displayName: 'Deploy to Test'
+    displayName: 'Deploy Infra to Test'
     dependsOn: Deploy_Dev
     condition: and(not(failed()), eq('${{ parameters.runTest }}', 'true'))
     variables:
@@ -204,15 +182,12 @@ stages:
               inlineScript: |
                 az deployment group validate \
                   --resource-group $(rgName) \
-                  --template-file ${{ parameters.templateML }} \
+                  --template-file $(templateInfra) \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
                                location='${{ parameters.location }}' \
-                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
-                               modelName='${{ parameters.modelName }}' \
-                               modelVersion='${{ parameters.modelVersion }}' \
-                               modelSkuName='${{ parameters.modelSkuName }}' \
-                               modelCapacity=${{ parameters.modelCapacity }}
+                               projectDisplayName='${{ parameters.projectDisplayName }}' \
+                               projectDescription='${{ parameters.projectDescription }}'
 
           - task: AzureCLI@2
             displayName: '3. What-If Preview'
@@ -223,15 +198,12 @@ stages:
               inlineScript: |
                 az deployment group what-if \
                   --resource-group $(rgName) \
-                  --template-file ${{ parameters.templateML }} \
+                  --template-file $(templateInfra) \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
                                location='${{ parameters.location }}' \
-                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
-                               modelName='${{ parameters.modelName }}' \
-                               modelVersion='${{ parameters.modelVersion }}' \
-                               modelSkuName='${{ parameters.modelSkuName }}' \
-                               modelCapacity=${{ parameters.modelCapacity }}
+                               projectDisplayName='${{ parameters.projectDisplayName }}' \
+                               projectDescription='${{ parameters.projectDescription }}'
 
           - task: AzureCLI@2
             displayName: '4. Execute Deployment'
@@ -240,24 +212,47 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                # Querying foundryAccountName from the modern Foundry resource
-                FOUNDRY_NAME=$(az deployment group create \
+                OUTPUTS=$(az deployment group create \
                   --resource-group $(rgName) \
-                  --template-file ${{ parameters.templateML }} \
+                  --template-file $(templateInfra) \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
                                location='${{ parameters.location }}' \
-                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
-                               modelName='${{ parameters.modelName }}' \
-                               modelVersion='${{ parameters.modelVersion }}' \
-                               modelSkuName='${{ parameters.modelSkuName }}' \
-                               modelCapacity=${{ parameters.modelCapacity }} \
-                  --query properties.outputs.foundryAccountName.value -o tsv)
-                echo "##vso[task.setvariable variable=foundryAccountName]$FOUNDRY_NAME"
+                               projectDisplayName='${{ parameters.projectDisplayName }}' \
+                               projectDescription='${{ parameters.projectDescription }}' \
+                  --query properties.outputs -o json)
+
+                echo "##vso[task.setvariable variable=foundryAccountName]$(echo "$OUTPUTS"    | jq -r '.foundryAccountName.value')"
+                echo "##vso[task.setvariable variable=storageAccountName]$(echo "$OUTPUTS"    | jq -r '.storageAccountName.value')"
+                echo "##vso[task.setvariable variable=keyVaultName]$(echo "$OUTPUTS"          | jq -r '.keyVaultName.value')"
+                echo "##vso[task.setvariable variable=containerRegistryName]$(echo "$OUTPUTS" | jq -r '.containerRegistryName.value')"
+                echo "##vso[task.setvariable variable=appInsightsName]$(echo "$OUTPUTS"       | jq -r '.appInsightsName.value')"
+
+          - task: AzureCLI@2
+            displayName: '5. Smoke Test — All Resources'
+            inputs:
+              azureSubscription: '$(service_conn)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "=== AI Foundry Account ==="
+                az cognitiveservices account show --name $(foundryAccountName) --resource-group $(rgName) --query "{name:name, endpoint:properties.endpoint}" -o table
+
+                echo "=== Storage Account ==="
+                az storage account show --name $(storageAccountName) --resource-group $(rgName) --query "{name:name, sku:sku.name}" -o table
+
+                echo "=== Key Vault ==="
+                az keyvault show --name $(keyVaultName) --resource-group $(rgName) --query "{name:name, uri:properties.vaultUri}" -o table
+
+                echo "=== Container Registry ==="
+                az acr show --name $(containerRegistryName) --resource-group $(rgName) --query "{name:name, loginServer:loginServer}" -o table
+
+                echo "=== Application Insights ==="
+                az monitor app-insights component show --app $(appInsightsName) --resource-group $(rgName) --query "{name:name, instrumentationKey:instrumentationKey}" -o table
 
   # --- PROD STAGE ---
   - stage: Deploy_Prod
-    displayName: 'Deploy to Production'
+    displayName: 'Deploy Infra to Production'
     dependsOn: Deploy_Test
     condition: and(not(failed()), eq('${{ parameters.runProd }}', 'true'))
     variables:
@@ -286,15 +281,12 @@ stages:
               inlineScript: |
                 az deployment group validate \
                   --resource-group $(rgName) \
-                  --template-file ${{ parameters.templateML }} \
+                  --template-file $(templateInfra) \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
                                location='${{ parameters.location }}' \
-                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
-                               modelName='${{ parameters.modelName }}' \
-                               modelVersion='${{ parameters.modelVersion }}' \
-                               modelSkuName='${{ parameters.modelSkuName }}' \
-                               modelCapacity=${{ parameters.modelCapacity }}
+                               projectDisplayName='${{ parameters.projectDisplayName }}' \
+                               projectDescription='${{ parameters.projectDescription }}'
 
           - task: AzureCLI@2
             displayName: '3. What-If Preview'
@@ -305,15 +297,12 @@ stages:
               inlineScript: |
                 az deployment group what-if \
                   --resource-group $(rgName) \
-                  --template-file ${{ parameters.templateML }} \
+                  --template-file $(templateInfra) \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
                                location='${{ parameters.location }}' \
-                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
-                               modelName='${{ parameters.modelName }}' \
-                               modelVersion='${{ parameters.modelVersion }}' \
-                               modelSkuName='${{ parameters.modelSkuName }}' \
-                               modelCapacity=${{ parameters.modelCapacity }}
+                               projectDisplayName='${{ parameters.projectDisplayName }}' \
+                               projectDescription='${{ parameters.projectDescription }}'
 
           - task: AzureCLI@2
             displayName: '4. Execute Deployment'
@@ -322,17 +311,40 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                # Querying foundryAccountName from the modern Foundry resource
-                FOUNDRY_NAME=$(az deployment group create \
+                OUTPUTS=$(az deployment group create \
                   --resource-group $(rgName) \
-                  --template-file ${{ parameters.templateML }} \
+                  --template-file $(templateInfra) \
                   --parameters personName='${{ parameters.personName }}' \
                                environment='$(envName)' \
                                location='${{ parameters.location }}' \
-                               modelDeploymentName='${{ parameters.modelDeploymentName }}' \
-                               modelName='${{ parameters.modelName }}' \
-                               modelVersion='${{ parameters.modelVersion }}' \
-                               modelSkuName='${{ parameters.modelSkuName }}' \
-                               modelCapacity=${{ parameters.modelCapacity }} \
-                  --query properties.outputs.foundryAccountName.value -o tsv)
-                echo "##vso[task.setvariable variable=foundryAccountName]$FOUNDRY_NAME"
+                               projectDisplayName='${{ parameters.projectDisplayName }}' \
+                               projectDescription='${{ parameters.projectDescription }}' \
+                  --query properties.outputs -o json)
+
+                echo "##vso[task.setvariable variable=foundryAccountName]$(echo "$OUTPUTS"    | jq -r '.foundryAccountName.value')"
+                echo "##vso[task.setvariable variable=storageAccountName]$(echo "$OUTPUTS"    | jq -r '.storageAccountName.value')"
+                echo "##vso[task.setvariable variable=keyVaultName]$(echo "$OUTPUTS"          | jq -r '.keyVaultName.value')"
+                echo "##vso[task.setvariable variable=containerRegistryName]$(echo "$OUTPUTS" | jq -r '.containerRegistryName.value')"
+                echo "##vso[task.setvariable variable=appInsightsName]$(echo "$OUTPUTS"       | jq -r '.appInsightsName.value')"
+
+          - task: AzureCLI@2
+            displayName: '5. Smoke Test — All Resources'
+            inputs:
+              azureSubscription: '$(service_conn)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "=== AI Foundry Account ==="
+                az cognitiveservices account show --name $(foundryAccountName) --resource-group $(rgName) --query "{name:name, endpoint:properties.endpoint}" -o table
+
+                echo "=== Storage Account ==="
+                az storage account show --name $(storageAccountName) --resource-group $(rgName) --query "{name:name, sku:sku.name}" -o table
+
+                echo "=== Key Vault ==="
+                az keyvault show --name $(keyVaultName) --resource-group $(rgName) --query "{name:name, uri:properties.vaultUri}" -o table
+
+                echo "=== Container Registry ==="
+                az acr show --name $(containerRegistryName) --resource-group $(rgName) --query "{name:name, loginServer:loginServer}" -o table
+
+                echo "=== Application Insights ==="
+                az monitor app-insights component show --app $(appInsightsName) --resource-group $(rgName) --query "{name:name, instrumentationKey:instrumentationKey}" -o table
